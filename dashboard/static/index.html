@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkinAI — GNN-Based Skin Cancer Prediction Dashboard</title>
+    <meta name="description" content="Interactive dashboard for GNN-based explainable skin cancer prediction using Graph Attention Networks on the HAM10000 dataset.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- ══════════ Top Nav ══════════ -->
+    <nav id="top-nav">
+        <div class="nav-brand">
+            <span class="nav-logo">🧬</span>
+            <h1>Skin<span class="accent">AI</span></h1>
+            <span class="nav-subtitle">GNN Explainable Prediction</span>
+        </div>
+        <div class="nav-stats" id="nav-stats">
+            <div class="stat-chip" id="stat-patients"><span class="stat-val">—</span> patients</div>
+            <div class="stat-chip" id="stat-classes"><span class="stat-val">7</span> classes</div>
+        </div>
+    </nav>
+
+    <!-- ══════════ Main Layout ══════════ -->
+    <main id="app">
+        <!-- ──── Left Panel: Patient Selector ──── -->
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <h2>Select a Patient</h2>
+                <p class="sidebar-hint">Choose an image to analyze</p>
+            </div>
+
+            <!-- Filters -->
+            <div class="filter-bar">
+                <select id="filter-diagnosis" class="filter-select">
+                    <option value="">All Diagnoses</option>
+                    <option value="akiec">Actinic Keratoses</option>
+                    <option value="bcc">Basal Cell Carcinoma</option>
+                    <option value="bkl">Benign Keratosis</option>
+                    <option value="df">Dermatofibroma</option>
+                    <option value="mel">Melanoma</option>
+                    <option value="nv">Melanocytic Nevi</option>
+                    <option value="vasc">Vascular Lesion</option>
+                </select>
+                <select id="filter-split" class="filter-select">
+                    <option value="">All Splits</option>
+                    <option value="train">Train</option>
+                    <option value="val">Validation</option>
+                    <option value="test">Test</option>
+                </select>
+            </div>
+
+            <!-- Patient Grid -->
+            <div id="patient-grid" class="patient-grid">
+                <!-- Populated by JS -->
+            </div>
+
+            <!-- Pagination -->
+            <div id="pagination" class="pagination">
+                <button id="prev-page" class="page-btn" disabled>← Prev</button>
+                <span id="page-info" class="page-info">Page 1</span>
+                <button id="next-page" class="page-btn">Next →</button>
+            </div>
+        </aside>
+
+        <!-- ──── Right Panel: Results ──── -->
+        <section id="results-panel">
+            <!-- Empty State -->
+            <div id="empty-state" class="empty-state">
+                <div class="empty-icon">🔬</div>
+                <h2>Select a Patient Image</h2>
+                <p>Choose a skin lesion image from the left panel to see the model's prediction, explanation, and comparison with the ground truth.</p>
+                <div class="empty-features">
+                    <div class="feature-card">
+                        <span class="feature-icon">🎯</span>
+                        <span>Prediction vs Ground Truth</span>
+                    </div>
+                    <div class="feature-card">
+                        <span class="feature-icon">🧠</span>
+                        <span>AI Explanation</span>
+                    </div>
+                    <div class="feature-card">
+                        <span class="feature-icon">👥</span>
+                        <span>Similar Patients</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div id="loading-state" class="loading-state hidden">
+                <div class="loader-ring">
+                    <div></div><div></div><div></div><div></div>
+                </div>
+                <p>Running GNNExplainer...</p>
+                <p class="loading-hint">This may take a few seconds</p>
+            </div>
+
+            <!-- Results Content -->
+            <div id="results-content" class="results-content hidden">
+
+                <!-- ── Prediction Header ── -->
+                <div id="prediction-header" class="prediction-header">
+                    <div class="pred-status" id="pred-status"></div>
+                </div>
+
+                <!-- ── Input Image + Prediction Cards ── -->
+                <div class="result-top-row">
+                    <div class="card input-image-card" id="input-image-card">
+                        <div class="card-label">Input Image</div>
+                        <img id="input-image" src="" alt="Input lesion image">
+                        <div class="card-meta" id="input-meta"></div>
+                    </div>
+
+                    <div class="prediction-cards">
+                        <div class="card pred-card" id="predicted-card">
+                            <div class="card-label">Model Prediction</div>
+                            <div class="pred-value" id="pred-value">—</div>
+                            <div class="pred-confidence" id="pred-confidence">—</div>
+                        </div>
+                        <div class="card pred-card" id="true-card">
+                            <div class="card-label">Ground Truth</div>
+                            <div class="pred-value truth-value" id="true-value">—</div>
+                        </div>
+                        <div class="card pred-card" id="error-card">
+                            <div class="card-label">Verdict</div>
+                            <div class="pred-verdict" id="pred-verdict">—</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Confidence Breakdown ── -->
+                <div class="card" id="confidence-card">
+                    <h3 class="section-title">📊 Confidence per Class</h3>
+                    <div id="confidence-bars" class="confidence-bars"></div>
+                </div>
+
+                <!-- ── Feature Importance ── -->
+                <div class="card" id="feature-card">
+                    <h3 class="section-title">🧩 What Mattered More?</h3>
+                    <p class="section-desc">How much did the image features vs. clinical metadata contribute to this prediction?</p>
+                    <div id="feature-bars" class="feature-importance-bars"></div>
+                </div>
+
+                <!-- ── Similar Patients (Intuitive Explanation) ── -->
+                <div class="card" id="neighbors-card">
+                    <h3 class="section-title">👥 Why This Prediction? — Similar Patients</h3>
+                    <p class="section-desc" id="neighbors-desc">
+                        The model predicted this diagnosis because this lesion is most similar to these past patients in the graph:
+                    </p>
+                    <div id="neighbors-grid" class="neighbors-grid"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.kaggle/
+
+# macOS
+.DS_Store
+
+# Downloaded and generated datasets
+data/raw/
+data/processed/
+
+# Generated model artifacts
+checkpoints/
+
+# Runtime and tool output
+*.log
+.pytest_cache/
+.mypy_cache/

@@ -47,14 +47,14 @@ def stage_download():
     verify_dataset()
 
 
-def stage_preprocess():
+def stage_preprocess(args):
     """Build the patient graph."""
     print("\n" + "█" * 60)
-    print("  STAGE 2 / 4 — Preprocessing & Graph Construction")
+    print("  STAGE 2 / 5 — Preprocessing & Graph Construction")
     print("█" * 60 + "\n")
     from src.data_prep import build_graph
 
-    data = build_graph()
+    data = build_graph(k=args.k, alpha=args.alpha)
     print(f"\n[SUMMARY] Graph ready:")
     print(f"  Nodes            : {data.num_nodes}")
     print(f"  Edges            : {data.num_edges}")
@@ -66,7 +66,7 @@ def stage_preprocess():
 def stage_train(args):
     """Train the GAT model."""
     print("\n" + "█" * 60)
-    print("  STAGE 3 / 4 — Training MultimodalGAT")
+    print("  STAGE 3 / 5 — Training MultimodalGAT")
     print("█" * 60 + "\n")
     from src.train import train
 
@@ -81,9 +81,9 @@ def stage_train(args):
 
 
 def stage_explain(args):
-    """Run GNNExplainer."""
+    """Run GNNExplainer and ViT Image-level Explanations."""
     print("\n" + "█" * 60)
-    print("  STAGE 4 / 4 — Generating Explanations (GNNExplainer)")
+    print("  STAGE 4 / 5 — Generating Explanations (GNNExplainer + ViT Rollout/IG)")
     print("█" * 60 + "\n")
     from src.explain import run_explanations
 
@@ -91,6 +91,16 @@ def stage_explain(args):
         node_indices=args.explain_nodes,
         num_samples=args.explain_samples,
     )
+
+
+def stage_baselines(args):
+    """Run baseline models for report Table 3."""
+    print("\n" + "█" * 60)
+    print("  STAGE 5 / 5 — Running Baseline Models (CNN, ViT, ViT+Metadata)")
+    print("█" * 60 + "\n")
+    from src.baselines import run_all_baselines
+
+    run_all_baselines(epochs=args.baseline_epochs)
 
 
 # ── CLI ────────────────────────────────────────────────────
@@ -103,20 +113,26 @@ def main():
     parser.add_argument(
         "--stage",
         type=str,
-        choices=["download", "preprocess", "train", "explain", "all"],
+        choices=["download", "preprocess", "train", "explain", "baselines", "all"],
         default="all",
         help=(
             "Which stage to run:\n"
             "  download   — Download HAM10000 from Kaggle\n"
-            "  preprocess — Extract features & build graph\n"
-            "  train      — Train the GAT model\n"
-            "  explain    — Run GNNExplainer on test patients\n"
+            "  preprocess — Extract ViT features & build graph\n"
+            "  train      — Train the ViT+GAT model\n"
+            "  explain    — Run GNNExplainer & ViT explainability\n"
+            "  baselines  — Train baseline classifiers for Table 3 comparison\n"
             "  all        — Run the full pipeline (default)"
         ),
     )
 
+    # Graph construction parameters
+    parser.add_argument("--k", type=int, default=5, help="Number of neighbors in kNN graph")
+    parser.add_argument("--alpha", type=float, default=0.7, help="Visual (alpha) vs clinical (1-alpha) similarity balance")
+
     # Training hyperparameters
     parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--baseline-epochs", type=int, default=40, help="Epochs for baseline MLP models")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--hidden", type=int, default=256)
     parser.add_argument("--heads", type=int, default=4)
@@ -131,17 +147,20 @@ def main():
 
     if args.stage == "all":
         stage_download()
-        stage_preprocess()
+        stage_preprocess(args)
         stage_train(args)
         stage_explain(args)
+        stage_baselines(args)
     elif args.stage == "download":
         stage_download()
     elif args.stage == "preprocess":
-        stage_preprocess()
+        stage_preprocess(args)
     elif args.stage == "train":
         stage_train(args)
     elif args.stage == "explain":
         stage_explain(args)
+    elif args.stage == "baselines":
+        stage_baselines(args)
 
     print("\n✅ Pipeline complete.")
 

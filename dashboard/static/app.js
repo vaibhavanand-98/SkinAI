@@ -240,7 +240,7 @@ function renderFeatureImportance(result) {
     container.innerHTML = `
         <div class="feat-bar-group">
             <div class="feat-bar-icon">🖼️</div>
-            <div class="feat-bar-name">Visual (CNN) Features</div>
+            <div class="feat-bar-name">Visual (ViT) Features</div>
             <div class="feat-bar-outer">
                 <div class="feat-bar-inner visual" style="width: 0%"></div>
             </div>

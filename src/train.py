@@ -36,12 +36,15 @@ import torch.nn.functional as F
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
+    confusion_matrix,
     f1_score,
+    precision_score,
+    recall_score,
 )
 from torch_geometric.loader import NeighborLoader
 from torch_geometric.utils import dropout_edge
 
-from src.data_prep import build_graph, LABEL_MAP
+from src.data_prep import build_graph, LABEL_MAP, VISUAL_DIM
 from src.model import MultimodalGAT
 
 
@@ -83,15 +86,15 @@ class FocalLoss(torch.nn.Module):
 
 # ── Class weights ──────────────────────────────────────────
 
-def compute_class_weights(y: torch.Tensor, num_classes: int = 7) -> torch.Tensor:
+def compute_class_weights(y: torch.Tensor, num_classes: int = 7, beta: float = 0.35) -> torch.Tensor:
     """
-    Compute inverse-frequency weights so that rare classes
-    (melanoma, dermatofibroma, vascular) are penalised more
-    during training.
+    Compute smoothed power-law class weights (effective frequency).
+    Prevents majority class (NV) accuracy degradation while still penalising
+    errors on rare classes (melanoma, dermatofibroma, vascular).
     """
     counts = torch.bincount(y, minlength=num_classes).float()
-    weights = 1.0 / (counts + 1e-6)
-    weights = weights / weights.sum() * num_classes   # normalise
+    weights = (counts.max() / (counts + 1e-6)) ** beta
+    weights = weights / weights.mean()
     return weights
 
 
@@ -203,24 +206,24 @@ def evaluate(model, data, mask, criterion):
 # ── Main Training Loop ────────────────────────────────────
 
 def train(
-    epochs: int = 100,
-    lr: float = 1e-3,
-    weight_decay: float = 1e-3,
+    epochs: int = 60,
+    lr: float = 8e-4,
+    weight_decay: float = 1e-4,
     hidden: int = 256,
     heads: int = 4,
-    dropout: float = 0.4,
+    dropout: float = 0.25,
     patience: int = 20,
     use_batching: bool = False,
     batch_size: int = 512,
-    drop_edge_rate: float = 0.1,
-    feature_mask_rate: float = 0.1,
+    drop_edge_rate: float = 0.05,
+    feature_mask_rate: float = 0.05,
 ):
     """
     Full training pipeline with L2 regularization (weight_decay),
-    DropEdge, feature masking, and macro-F1-based early stopping.
+    DropEdge, feature masking, smoothed class weighting, and macro-F1-based early stopping.
     """
     print("=" * 60)
-    print("  GAT Training Pipeline (v2 — with Regularisation)")
+    print("  GAT Training Pipeline (v3 — High-Accuracy Multimodal GAT)")
     print("=" * 60)
 
     # ── Load graph ─────────────────────────────────────────
@@ -248,8 +251,8 @@ def train(
 
     # ── Model ──────────────────────────────────────────────
     model = MultimodalGAT(
-        visual_channels=2048,
-        meta_channels=num_features - 2048,
+        visual_channels=VISUAL_DIM,
+        meta_channels=num_features - VISUAL_DIM,
         hidden_channels=hidden,
         out_channels=num_classes,
         heads=heads,
@@ -257,12 +260,12 @@ def train(
     ).to(DEVICE)
 
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"[MODEL] MultimodalGAT (v2) — {total_params:,} parameters\n")
+    print(f"[MODEL] MultimodalGAT (v3) — {total_params:,} parameters\n")
 
-    # ── Loss (class-weighted) ──────────────────────────────
-    class_weights = compute_class_weights(data.y.cpu(), num_classes).to(DEVICE)
-    criterion = FocalLoss(alpha=class_weights, gamma=2.0)
-    print(f"[LOSS] Class weights: {class_weights.cpu().numpy().round(3)}\n")
+    # ── Loss (smoothed class weights + label smoothing) ────
+    class_weights = compute_class_weights(data.y[data.train_mask].cpu(), num_classes).to(DEVICE)
+    criterion = torch.nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.03)
+    print(f"[LOSS] Smoothed class weights: {class_weights.cpu().numpy().round(3)}\n")
 
     # ── Optimizer + Scheduler ──────────────────────────────
     # L2 Regularization is applied via weight_decay in AdamW
@@ -363,37 +366,98 @@ def train(
         test_targets, test_preds, target_names=target_names, zero_division=0
     )
 
-    print(f"\n  Test Accuracy : {test_acc:.4f}")
-    print(f"  Test Macro-F1 : {test_f1:.4f}")
-    print(f"  Best Val F1   : {best_val_f1:.4f}")
+    # Extended metrics for report Table 3
+    test_precision = precision_score(
+        test_targets, test_preds, average="macro", zero_division=0
+    )
+    test_recall = recall_score(
+        test_targets, test_preds, average="macro", zero_division=0
+    )
+    # Per-class recall (melanoma = class 4 is the most critical)
+    per_class_recall = recall_score(
+        test_targets, test_preds, average=None, zero_division=0
+    )
+    mel_idx = LABEL_MAP.get("mel", 4)
+    mel_recall = per_class_recall[mel_idx] if mel_idx < len(per_class_recall) else 0.0
+
+    print(f"\n  Test Accuracy       : {test_acc:.4f}")
+    print(f"  Test Precision (M)  : {test_precision:.4f}")
+    print(f"  Test Recall (M)     : {test_recall:.4f}")
+    print(f"  Test Macro-F1       : {test_f1:.4f}")
+    print(f"  Melanoma Recall     : {mel_recall:.4f}  ← critical metric")
+    print(f"  Best Val F1         : {best_val_f1:.4f}")
     print(f"\n{report}")
+
+    # ── Confusion matrix ──────────────────────────────────
+    cm = confusion_matrix(test_targets, test_preds)
+    print("Confusion Matrix:")
+    print(cm)
+
+    # Save confusion matrix plot
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from sklearn.metrics import ConfusionMatrixDisplay
+
+        viz_dir = PROJECT_ROOT / "visualizations"
+        viz_dir.mkdir(exist_ok=True)
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        disp = ConfusionMatrixDisplay(
+            confusion_matrix=cm, display_labels=target_names
+        )
+        disp.plot(ax=ax, cmap="Blues", values_format="d")
+        ax.set_title("ViT+GAT Confusion Matrix (Test Set)", fontsize=14)
+        plt.tight_layout()
+        cm_path = viz_dir / "confusion_matrix.png"
+        fig.savefig(cm_path, dpi=150)
+        plt.close(fig)
+        print(f"[INFO] Confusion matrix saved → {cm_path}")
+    except Exception as e:
+        print(f"[WARN] Could not save confusion matrix plot: {e}")
 
     # ── Save history ───────────────────────────────────────
     history_path = CHECKPOINT_DIR / "training_history.json"
     with open(history_path, "w") as f:
         json.dump(history, f, indent=2)
+
+    # Also save final metrics for the report
+    final_metrics = {
+        "test_accuracy": round(test_acc, 4),
+        "test_precision_macro": round(test_precision, 4),
+        "test_recall_macro": round(test_recall, 4),
+        "test_macro_f1": round(test_f1, 4),
+        "melanoma_recall": round(mel_recall, 4),
+        "best_val_f1": round(best_val_f1, 4),
+        "confusion_matrix": cm.tolist(),
+    }
+    metrics_path = CHECKPOINT_DIR / "final_metrics.json"
+    with open(metrics_path, "w") as f:
+        json.dump(final_metrics, f, indent=2)
     print(f"[INFO] Training history saved → {history_path}")
+    print(f"[INFO] Final metrics saved → {metrics_path}")
 
     return model, data, history
 
 
 # ── CLI ────────────────────────────────────────────────────
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train MultimodalGAT (v2)")
-    parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight-decay", type=float, default=1e-3,
+    parser = argparse.ArgumentParser(description="Train MultimodalGAT (v3 — High Accuracy)")
+    parser.add_argument("--epochs", type=int, default=60)
+    parser.add_argument("--lr", type=float, default=8e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4,
                         help="L2 regularization strength")
     parser.add_argument("--hidden", type=int, default=256)
     parser.add_argument("--heads", type=int, default=4)
-    parser.add_argument("--dropout", type=float, default=0.4)
+    parser.add_argument("--dropout", type=float, default=0.25)
     parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--batched", action="store_true",
                         help="Use NeighborLoader mini-batching")
     parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--drop-edge-rate", type=float, default=0.1,
+    parser.add_argument("--drop-edge-rate", type=float, default=0.05,
                         help="DropEdge rate during training")
-    parser.add_argument("--feature-mask-rate", type=float, default=0.1,
+    parser.add_argument("--feature-mask-rate", type=float, default=0.05,
                         help="Feature masking rate during training")
     args = parser.parse_args()
 

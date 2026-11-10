@@ -11,7 +11,7 @@ For any given patient (node), this module produces:
    of a confusing graph plot, the user sees "We predicted Melanoma
    because this lesion is similar to these 3 past patients who had
    Melanoma".
-2. **Feature Group Importance** – whether visual (CNN) features or
+2. **Feature Group Importance** – whether visual (ViT) features or
    clinical metadata contributed more to the prediction.
 3. **Prediction Summary** – predicted class, true class, confidence
    scores, and whether the model was correct.
@@ -307,7 +307,7 @@ def visualise_explanation(result: dict, data, save_dir: Path = EXPLAIN_DIR):
     # ── 2. Feature importance chart ────────────────────────
     fig2, ax2 = plt.subplots(1, 1, figsize=(8, 5))
     summary = result["feature_summary"]
-    categories = ["Visual (CNN)\nImage Features", "Clinical Metadata\n(Age, Sex, Site)"]
+    categories = ["Visual (ViT)\nImage Features", "Clinical Metadata\n(Age, Sex, Site)"]
     values = [summary["visual_features_pct"], summary["metadata_features_pct"]]
     colors = ["#0074D9", "#2ECC40"]
 
@@ -381,8 +381,8 @@ def run_explanations(node_indices: list[int] | None = None, num_samples: int = 5
 
     # Load trained model
     model = MultimodalGAT(
-        visual_channels=2048,
-        meta_channels=num_features - 2048,
+        visual_channels=VISUAL_DIM,
+        meta_channels=num_features - VISUAL_DIM,
         hidden_channels=256,
         out_channels=num_classes,
         heads=4,
@@ -454,6 +454,18 @@ def run_explanations(node_indices: list[int] | None = None, num_samples: int = 5
         print()
 
         visualise_explanation(result, data)
+
+        # ── Image-level explanations (ViT Attention Rollout & IG) ──
+        input_image_id = result.get("image_id")
+        input_img_path = _find_image_path(input_image_id) if input_image_id else None
+        if input_img_path and input_img_path.exists():
+            try:
+                from src.vit_explain import explain_image
+                print(f"  [ViT Explain] Generating Attention Rollout & Integrated Gradients for {input_image_id}...")
+                vit_res = explain_image(input_img_path, EXPLAIN_DIR, node_idx=nid, device=DEVICE)
+                print(f"  [ViT Explain] Saved heatmaps: {vit_res}")
+            except Exception as e:
+                print(f"  [ViT Explain] Skipped image-level explanation: {e}")
 
     print(f"\n[DONE] All explanations saved to {EXPLAIN_DIR}")
 

@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 import uvicorn
 
-from src.data_prep import build_graph, LABEL_MAP, LABEL_NAMES, RAW_DIR
+from src.data_prep import build_graph, LABEL_MAP, LABEL_NAMES, RAW_DIR, VISUAL_DIM
 from src.model import MultimodalGAT
 from src.explain import create_explainer, explain_node
 
@@ -73,8 +73,8 @@ def load_model_and_data():
 
     print("[Dashboard] Loading trained model...")
     model = MultimodalGAT(
-        visual_channels=2048,
-        meta_channels=num_features - 2048,
+        visual_channels=VISUAL_DIM,
+        meta_channels=num_features - VISUAL_DIM,
         hidden_channels=256,
         out_channels=num_classes,
         heads=4,

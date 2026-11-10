@@ -19,7 +19,8 @@ data/raw/
 data/processed/
 
 # Generated model artifacts
-checkpoints/
+checkpoints/*
+!checkpoints/*.json
 
 # Runtime and tool output
 *.log
